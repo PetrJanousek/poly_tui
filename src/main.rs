@@ -31,6 +31,7 @@ fn load_user_addresses() -> Vec<String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let _ = dotenvy::dotenv();
     let user_addresses = load_user_addresses();
     let host = std::env::args()
         .nth(1)

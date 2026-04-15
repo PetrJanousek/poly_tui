@@ -29,12 +29,18 @@ pub struct Db {
 pub async fn connect(host: &str) -> Result<Db> {
     let base_url = format!("http://{host}:9000");
 
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
     // Quick connectivity check
-    let http = reqwest::Client::new();
     http.get(format!("{base_url}/exec?query={}&fmt=json", urlencoded("SELECT 1")))
         .send()
         .await
         .context(format!("Failed to connect to QuestDB at {host}:9000"))?;
+
+    eprintln!("Connected to QuestDB at {base_url}");
 
     Ok(Db { http, base_url })
 }
