@@ -70,10 +70,25 @@ impl App {
                 .cloned()
                 .collect();
 
-            if self.replay.tick(&outcome_snapshots) {
-                let visible = self.replay.visible_trade_count(&outcome_snapshots, &data.user_trades);
-                self.pnl.process_trades(&data.user_trades, visible);
-            }
+            self.replay.tick(&outcome_snapshots);
+            self.sync_pnl();
+        }
+    }
+
+    /// Recalculate visible trades and update PnL to match current cursor position.
+    pub fn sync_pnl(&mut self) {
+        if let Some(data) = &self.market_data {
+            let outcome_snapshots: Vec<_> = data
+                .snapshots
+                .iter()
+                .filter(|s| s.outcome == self.show_outcome)
+                .cloned()
+                .collect();
+
+            let visible = self
+                .replay
+                .visible_trade_count(&outcome_snapshots, &data.user_trades);
+            self.pnl.process_trades(&data.user_trades, visible);
         }
     }
 

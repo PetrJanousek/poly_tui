@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
-use tokio_postgres::NoTls;
 
 use crate::model::{Market, OrderbookSnapshot, Resolution, UserTrade};
 
@@ -23,28 +22,58 @@ fn urlencoded(s: &str) -> String {
 }
 
 pub struct Db {
-    pub pg: tokio_postgres::Client,
     pub http: reqwest::Client,
-    pub http_base: String,
+    pub base_url: String,
 }
 
 pub async fn connect(host: &str) -> Result<Db> {
-    let pg_conn_str = format!("host={host} port=8812 user=admin password=quest dbname=qdb");
-    let (pg, connection) = tokio_postgres::connect(&pg_conn_str, NoTls)
+    let base_url = format!("http://{host}:9000");
+
+    // Quick connectivity check
+    let http = reqwest::Client::new();
+    http.get(format!("{base_url}/exec?query={}&fmt=json", urlencoded("SELECT 1")))
+        .send()
         .await
-        .context(format!("Failed to connect to QuestDB at {host}"))?;
+        .context(format!("Failed to connect to QuestDB at {host}:9000"))?;
 
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("QuestDB connection error: {e}");
-        }
-    });
+    Ok(Db { http, base_url })
+}
 
-    Ok(Db {
-        pg,
-        http: reqwest::Client::new(),
-        http_base: format!("http://{host}:9000"),
-    })
+async fn query(db: &Db, sql: &str) -> Result<serde_json::Value> {
+    let url = format!(
+        "{}/exec?query={}&fmt=json",
+        db.base_url,
+        urlencoded(sql)
+    );
+
+    let resp: serde_json::Value = db
+        .http
+        .get(&url)
+        .send()
+        .await
+        .context("HTTP request failed")?
+        .json::<serde_json::Value>()
+        .await
+        .context("JSON parse failed")?;
+
+    if let Some(err) = resp.get("error") {
+        anyhow::bail!("QuestDB error: {err}");
+    }
+
+    Ok(resp)
+}
+
+fn get_str<'a>(row: &'a [serde_json::Value], idx: usize) -> &'a str {
+    row[idx].as_str().unwrap_or("")
+}
+
+fn get_f64(row: &[serde_json::Value], idx: usize) -> f64 {
+    row[idx].as_f64().unwrap_or(0.0)
+}
+
+fn parse_timestamp(s: &str) -> Result<NaiveDateTime> {
+    NaiveDateTime::parse_from_str(s.trim_end_matches('Z'), "%Y-%m-%dT%H:%M:%S%.f")
+        .context("parse timestamp")
 }
 
 pub async fn fetch_markets(
@@ -69,7 +98,7 @@ pub async fn fetch_markets(
         None => String::new(),
     };
 
-    let query = format!(
+    let sql = format!(
         "SELECT condition_id, crypto, question, slug, end_date \
          FROM resolutions \
          WHERE timestamp >= cast({from_ts} as timestamp) \
@@ -79,21 +108,21 @@ pub async fn fetch_markets(
          ORDER BY end_date DESC"
     );
 
-    let rows = db.pg.query(&query, &[]).await.context("fetch_markets")?;
+    let resp = query(db, &sql).await.context("fetch_markets")?;
+    let dataset = resp["dataset"].as_array().context("missing dataset")?;
 
     let mut markets = Vec::new();
-    for row in rows {
-        let condition_id: &str = row.get(0);
-        let crypto: &str = row.get(1);
-        let question: &str = row.get(2);
-        let slug: &str = row.get(3);
-        let end_date: Option<NaiveDateTime> = row.try_get(4).ok();
+    for row in dataset {
+        let arr = row.as_array().context("row not array")?;
+        let end_date = arr[4]
+            .as_str()
+            .and_then(|s| parse_timestamp(s).ok());
 
         markets.push(Market {
-            condition_id: condition_id.to_string(),
-            crypto: crypto.to_string(),
-            question: question.to_string(),
-            slug: slug.to_string(),
+            condition_id: get_str(arr, 0).to_string(),
+            crypto: get_str(arr, 1).to_string(),
+            question: get_str(arr, 2).to_string(),
+            slug: get_str(arr, 3).to_string(),
             end_date,
         });
     }
@@ -101,55 +130,25 @@ pub async fn fetch_markets(
     Ok(markets)
 }
 
-/// Fetch orderbook snapshots via QuestDB REST API (port 9000).
-/// PG wire protocol can't deserialize QuestDB's 2D arrays, so we use HTTP+JSON.
 pub async fn fetch_orderbook(
     db: &Db,
     condition_id: &str,
 ) -> Result<Vec<OrderbookSnapshot>> {
-    let query = format!(
+    let sql = format!(
         "SELECT timestamp, outcome, bids, asks \
          FROM orderbook \
          WHERE condition_id = '{condition_id}' \
          ORDER BY timestamp ASC"
     );
 
-    let url = format!(
-        "{}/exec?query={}&fmt=json",
-        db.http_base,
-        urlencoded(&query)
-    );
-
-    let resp: serde_json::Value = db
-        .http
-        .get(&url)
-        .send()
-        .await
-        .context("orderbook HTTP request")?
-        .json::<serde_json::Value>()
-        .await
-        .context("orderbook JSON parse")?;
-
-    if let Some(err) = resp.get("error") {
-        anyhow::bail!("QuestDB error: {err}");
-    }
-
-    let dataset = resp["dataset"]
-        .as_array()
-        .context("missing dataset")?;
+    let resp = query(db, &sql).await.context("fetch_orderbook")?;
+    let dataset = resp["dataset"].as_array().context("missing dataset")?;
 
     let mut snapshots = Vec::new();
     for row in dataset {
-        let arr: &Vec<serde_json::Value> = row.as_array().context("row not array")?;
-
-        let ts_str = arr[0].as_str().context("timestamp")?;
-        let timestamp = NaiveDateTime::parse_from_str(
-            ts_str.trim_end_matches('Z'),
-            "%Y-%m-%dT%H:%M:%S%.f",
-        )
-        .context("parse timestamp")?;
-
-        let outcome = arr[1].as_str().context("outcome")?.to_string();
+        let arr = row.as_array().context("row not array")?;
+        let timestamp = parse_timestamp(get_str(arr, 0))?;
+        let outcome = get_str(arr, 1).to_string();
 
         let bids = parse_json_2d_array(&arr[2]);
         let asks = parse_json_2d_array(&arr[3]);
@@ -195,7 +194,7 @@ pub async fn fetch_user_trades(
     let addresses: Vec<String> = user_addresses.iter().map(|a| format!("'{a}'")).collect();
     let addr_list = addresses.join(",");
 
-    let query = format!(
+    let sql = format!(
         "SELECT timestamp, side, outcome, price, size, transaction_hash \
          FROM user_trades \
          WHERE condition_id = '{condition_id}' \
@@ -203,28 +202,21 @@ pub async fn fetch_user_trades(
          ORDER BY timestamp ASC"
     );
 
-    let rows = db
-        .pg
-        .query(&query, &[])
-        .await
-        .context("fetch_user_trades")?;
+    let resp = query(db, &sql).await.context("fetch_user_trades")?;
+    let dataset = resp["dataset"].as_array().context("missing dataset")?;
 
     let mut trades = Vec::new();
-    for row in rows {
-        let timestamp: NaiveDateTime = row.get(0);
-        let side: &str = row.get(1);
-        let outcome: &str = row.get(2);
-        let price: f64 = row.get(3);
-        let size: f64 = row.get(4);
-        let transaction_hash: &str = row.get(5);
+    for row in dataset {
+        let arr = row.as_array().context("row not array")?;
+        let timestamp = parse_timestamp(get_str(arr, 0))?;
 
         trades.push(UserTrade {
             timestamp,
-            side: side.to_string(),
-            outcome: outcome.to_string(),
-            price,
-            size,
-            transaction_hash: transaction_hash.to_string(),
+            side: get_str(arr, 1).to_string(),
+            outcome: get_str(arr, 2).to_string(),
+            price: get_f64(arr, 3),
+            size: get_f64(arr, 4),
+            transaction_hash: get_str(arr, 5).to_string(),
         });
     }
 
@@ -235,24 +227,22 @@ pub async fn fetch_resolution(
     db: &Db,
     condition_id: &str,
 ) -> Result<Option<Resolution>> {
-    let query = format!(
+    let sql = format!(
         "SELECT winning_outcome, yes_price, no_price \
          FROM resolutions \
          WHERE condition_id = '{condition_id}' \
          LATEST ON timestamp PARTITION BY condition_id"
     );
 
-    let rows = db
-        .pg
-        .query(&query, &[])
-        .await
-        .context("fetch_resolution")?;
+    let resp = query(db, &sql).await.context("fetch_resolution")?;
+    let dataset = resp["dataset"].as_array().context("missing dataset")?;
 
-    if let Some(row) = rows.first() {
+    if let Some(row) = dataset.first() {
+        let arr = row.as_array().context("row not array")?;
         Ok(Some(Resolution {
-            winning_outcome: row.get::<_, &str>(0).to_string(),
-            yes_price: row.get(1),
-            no_price: row.get(2),
+            winning_outcome: get_str(arr, 0).to_string(),
+            yes_price: get_f64(arr, 1),
+            no_price: get_f64(arr, 2),
         }))
     } else {
         Ok(None)

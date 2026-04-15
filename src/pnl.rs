@@ -38,6 +38,10 @@ impl PnlTracker {
     }
 
     pub fn process_trades(&mut self, trades: &[UserTrade], count: usize) {
+        // If cursor moved backward, reset and reprocess from scratch
+        if count < self.trades_processed {
+            self.reset();
+        }
         while self.trades_processed < count {
             let trade = &trades[self.trades_processed];
             let pos = match trade.outcome.as_str() {
@@ -49,19 +53,16 @@ impl PnlTracker {
                 }
             };
 
-            match trade.side.as_str() {
-                "Buy" => {
-                    pos.inventory += trade.size;
-                    pos.cost_basis += trade.price * trade.size;
-                }
-                "Sell" => {
-                    let avg = pos.avg_cost();
-                    let sell_amount = trade.size.min(pos.inventory);
-                    pos.realized_pnl += (trade.price - avg) * sell_amount;
-                    pos.cost_basis -= avg * sell_amount;
-                    pos.inventory -= sell_amount;
-                }
-                _ => {}
+            let side = trade.side.to_uppercase();
+            if side == "BUY" {
+                pos.inventory += trade.size;
+                pos.cost_basis += trade.price * trade.size;
+            } else if side == "SELL" {
+                let avg = pos.avg_cost();
+                let sell_amount = trade.size.min(pos.inventory);
+                pos.realized_pnl += (trade.price - avg) * sell_amount;
+                pos.cost_basis -= avg * sell_amount;
+                pos.inventory -= sell_amount;
             }
 
             self.trades_processed += 1;

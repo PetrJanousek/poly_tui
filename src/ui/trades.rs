@@ -21,7 +21,7 @@ pub fn render(f: &mut Frame, trades: &[UserTrade], visible_count: usize, area: R
         .take(visible_count)
         .rev() // newest first
         .map(|t| {
-            let color = if t.side == "Buy" {
+            let color = if t.side.eq_ignore_ascii_case("buy") {
                 Color::Green
             } else {
                 Color::Red

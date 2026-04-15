@@ -81,10 +81,12 @@ fn handle_replay_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Right | KeyCode::Char('l') => {
             let count = app.current_snapshots().len();
             app.replay.step_forward(count);
+            app.sync_pnl();
         }
 
         KeyCode::Left | KeyCode::Char('h') => {
             app.replay.step_backward();
+            app.sync_pnl();
         }
 
         KeyCode::Char('+') | KeyCode::Char('=') => {

@@ -97,12 +97,15 @@ fn render_replay(f: &mut Frame, app: &mut App) {
                 d.market.question,
                 app.show_outcome
             );
+            let play_status = if app.replay.playing { "Playing" } else { "Paused" };
             Paragraph::new(format!(
-                "\n  Market: {}\n  Crypto: {}\n  Outcome: {}\n  Snapshots: {}",
+                "\n  Market: {}\n  Crypto: {}\n  Outcome: {}\n  Snapshots: {}\n\n  {} | Speed: {}",
                 d.market.question,
                 d.market.crypto.to_uppercase(),
                 app.show_outcome,
-                snapshots.len()
+                snapshots.len(),
+                play_status,
+                app.replay.speed.label(),
             ))
             .block(
                 Block::default()

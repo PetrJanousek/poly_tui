@@ -8,6 +8,8 @@ pub enum PlaybackSpeed {
     X2,
     X5,
     X10,
+    X30,
+    X50,
 }
 
 impl PlaybackSpeed {
@@ -17,6 +19,8 @@ impl PlaybackSpeed {
             Self::X2 => 2.0,
             Self::X5 => 5.0,
             Self::X10 => 10.0,
+            Self::X30 => 30.0,
+            Self::X50 => 50.0,
         }
     }
 
@@ -26,6 +30,8 @@ impl PlaybackSpeed {
             Self::X2 => "2x",
             Self::X5 => "5x",
             Self::X10 => "10x",
+            Self::X30 => "30x",
+            Self::X50 => "50x",
         }
     }
 
@@ -34,7 +40,9 @@ impl PlaybackSpeed {
             Self::X1 => Self::X2,
             Self::X2 => Self::X5,
             Self::X5 => Self::X10,
-            Self::X10 => Self::X10,
+            Self::X10 => Self::X30,
+            Self::X30 => Self::X50,
+            Self::X50 => Self::X50,
         }
     }
 
@@ -44,6 +52,8 @@ impl PlaybackSpeed {
             Self::X2 => Self::X1,
             Self::X5 => Self::X2,
             Self::X10 => Self::X5,
+            Self::X30 => Self::X10,
+            Self::X50 => Self::X30,
         }
     }
 }
