@@ -223,6 +223,7 @@ pub async fn fetch_user_trades(
             price: get_f64(arr, 3),
             size: get_f64(arr, 4),
             transaction_hash: get_str(arr, 5).to_string(),
+            is_taker: false,
         });
     }
 

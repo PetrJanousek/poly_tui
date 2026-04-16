@@ -3,7 +3,8 @@
     "allow": [
       "Bash(cargo check *)",
       "WebFetch(domain:docs.polymarket.com)",
-      "Bash(uv run *)"
+      "Bash(uv run *)",
+      "Bash(cargo build *)"
     ]
   }
 }
