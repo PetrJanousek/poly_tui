@@ -118,12 +118,14 @@ impl ReplayState {
         if self.cursor < max.saturating_sub(1) {
             self.cursor += 1;
             self.last_tick = Instant::now();
+            self.playing = false;
         }
     }
 
     pub fn step_backward(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
         self.last_tick = Instant::now();
+        self.playing = false;
     }
 
     pub fn toggle_pause(&mut self) {
