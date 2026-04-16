@@ -13,7 +13,7 @@ pub fn render(f: &mut Frame, trades: &[UserTrade], visible_count: usize, area: R
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
-    let header = Row::new(vec!["Time", "Side", "Outcome", "Price", "Size"])
+    let header = Row::new(vec!["Time", "Side", "Outcome", "Role", "Price", "Size"])
         .style(Style::default().fg(Color::DarkGray));
 
     let rows: Vec<Row> = trades
@@ -28,10 +28,12 @@ pub fn render(f: &mut Frame, trades: &[UserTrade], visible_count: usize, area: R
             } else {
                 Color::Red
             };
+            let role = if t.is_taker { "T" } else { "M" };
             Row::new(vec![
                 t.timestamp.format("%H:%M:%S").to_string(),
                 t.side.clone(),
                 t.outcome.clone(),
+                role.to_string(),
                 format!("{:.4}", t.price),
                 format!("{:.2}", t.size),
             ])
@@ -43,6 +45,7 @@ pub fn render(f: &mut Frame, trades: &[UserTrade], visible_count: usize, area: R
         ratatui::layout::Constraint::Length(10),
         ratatui::layout::Constraint::Length(6),
         ratatui::layout::Constraint::Length(8),
+        ratatui::layout::Constraint::Length(5),
         ratatui::layout::Constraint::Length(8),
         ratatui::layout::Constraint::Length(10),
     ];

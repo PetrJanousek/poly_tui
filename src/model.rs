@@ -35,6 +35,7 @@ pub struct UserTrade {
     pub price: f64,
     pub size: f64,
     pub transaction_hash: String,
+    pub is_taker: bool,
 }
 
 #[derive(Debug, Clone)]

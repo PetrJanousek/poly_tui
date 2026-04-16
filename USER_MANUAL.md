@@ -84,6 +84,10 @@ Top 5 bid and ask levels with price, size, and a colored bar proportional to siz
 
 User trades *up to* the current replay cursor. As you play or step forward, new trades appear. Stepping backward drops trades (PnL re-computes from scratch).
 
+Columns: `Time | Side | Outcome | Role | Price | Size`. `Role` is `T` (taker) or `M` (maker), derived by diffing the `takerOnly=true` vs `takerOnly=false` `/trades` responses per `(user, market)`.
+
+Row colors: **green** for BUY Up (bullish-Up), **red** for everything else (BUY Down, SELL of either side).
+
 ### PnL panel (middle-right, Replay)
 
 - `Up:` inventory and average cost for Up shares.
