@@ -72,7 +72,7 @@ fn render_replay(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Percentage(55),
             Constraint::Percentage(40),
-            Constraint::Length(3),
+            Constraint::Length(4),
         ])
         .split(f.area());
 
@@ -99,11 +99,12 @@ fn render_replay(f: &mut Frame, app: &mut App) {
             );
             let play_status = if app.replay.playing { "Playing" } else { "Paused" };
             Paragraph::new(format!(
-                "\n  Market: {}\n  Crypto: {}\n  Outcome: {}\n  Snapshots: {}\n\n  {} | Speed: {}",
+                "\n  Market: {}\n  Crypto: {}\n  Outcome: {}\n  Snapshots: {}\n  Trades: {}\n\n  {} | Speed: {}",
                 d.market.question,
                 d.market.crypto.to_uppercase(),
                 app.show_outcome,
                 snapshots.len(),
+                d.user_trades.len(),
                 play_status,
                 app.replay.speed.label(),
             ))
@@ -145,5 +146,10 @@ fn render_replay(f: &mut Frame, app: &mut App) {
     }
 
     // Timeline
-    timeline::render(f, &app.replay, &snapshots, main_chunks[2]);
+    let trades_ref: &[crate::model::UserTrade] = app
+        .market_data
+        .as_ref()
+        .map(|d| d.user_trades.as_slice())
+        .unwrap_or(&[]);
+    timeline::render(f, &app.replay, &snapshots, trades_ref, main_chunks[2]);
 }

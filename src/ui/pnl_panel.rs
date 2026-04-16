@@ -52,6 +52,21 @@ pub fn render(
         ),
     ]));
 
+    let up_avg = pnl.up.avg_cost();
+    let down_avg = pnl.down.avg_cost();
+    if up_avg > 0.0 && down_avg > 0.0 {
+        let sum = up_avg + down_avg;
+        let sum_color = if sum < 1.0 { Color::Green } else { Color::Red };
+        lines.push(Line::from(vec![
+            Span::styled("Sum:  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{sum:.4}"), Style::default().fg(sum_color)),
+            Span::styled(
+                format!(" ({:+.4})", sum - 1.0),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+    }
+
     lines.push(Line::raw(""));
 
     // Realized PnL

@@ -111,9 +111,11 @@ async fn load_market_data(
     market: &crate::model::Market,
     user_addresses: &[String],
 ) -> anyhow::Result<MarketData> {
+    let trades_fut = fetch_polymarket_trades(&db.http, &market.condition_id, user_addresses);
+
     let (snapshots, user_trades, resolution) = tokio::try_join!(
         db::fetch_orderbook(db, &market.condition_id),
-        db::fetch_user_trades(db, &market.condition_id, user_addresses),
+        trades_fut,
         db::fetch_resolution(db, &market.condition_id),
     )?;
 
@@ -123,4 +125,22 @@ async fn load_market_data(
         user_trades,
         resolution,
     })
+}
+
+async fn fetch_polymarket_trades(
+    http: &reqwest::Client,
+    condition_id: &str,
+    user_addresses: &[String],
+) -> anyhow::Result<Vec<crate::model::UserTrade>> {
+    let mut all = Vec::new();
+    for addr in user_addresses {
+        match crate::poly_api::fetch_trades_for_market(http, addr, condition_id).await {
+            Ok(mut trades) => all.append(&mut trades),
+            Err(e) => {
+                eprintln!("polymarket fetch failed for {addr}: {e}");
+            }
+        }
+    }
+    all.sort_by_key(|t| t.timestamp);
+    Ok(all)
 }

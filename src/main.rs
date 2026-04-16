@@ -3,6 +3,7 @@ mod db;
 mod event;
 mod model;
 mod pnl;
+mod poly_api;
 mod replay;
 mod ui;
 
