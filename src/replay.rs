@@ -91,18 +91,27 @@ impl ReplayState {
         }
 
         let elapsed = self.last_tick.elapsed();
-        let current_ts = snapshots[self.cursor].timestamp;
-        let next_ts = snapshots[self.cursor + 1].timestamp;
-        let real_gap_ms = (next_ts - current_ts).num_milliseconds().max(0) as f64;
-        let scaled_gap_ms = real_gap_ms / self.speed.multiplier();
+        self.last_tick = Instant::now();
 
-        if elapsed.as_millis() as f64 >= scaled_gap_ms {
-            self.cursor += 1;
-            self.last_tick = Instant::now();
-            true
-        } else {
-            false
+        // Convert elapsed real time to simulated time budget (ms)
+        let mut budget_ms = elapsed.as_secs_f64() * 1000.0 * self.speed.multiplier();
+
+        let mut advanced = false;
+        while self.cursor < snapshots.len() - 1 && budget_ms > 0.0 {
+            let current_ts = snapshots[self.cursor].timestamp;
+            let next_ts = snapshots[self.cursor + 1].timestamp;
+            let gap_ms = (next_ts - current_ts).num_milliseconds().max(0) as f64;
+
+            if budget_ms >= gap_ms {
+                self.cursor += 1;
+                budget_ms -= gap_ms;
+                advanced = true;
+            } else {
+                break;
+            }
         }
+
+        advanced
     }
 
     pub fn step_forward(&mut self, max: usize) {
