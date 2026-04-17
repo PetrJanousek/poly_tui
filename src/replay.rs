@@ -73,6 +73,9 @@ pub struct ReplayState {
     pub playing: bool,
     pub speed: PlaybackSpeed,
     pub last_tick: Instant,
+    /// Simulated milliseconds accumulated but not yet consumed by a cursor step.
+    /// Persists across frames so gaps larger than one frame can be traversed.
+    accumulated_budget_ms: f64,
 }
 
 impl ReplayState {
@@ -82,29 +85,33 @@ impl ReplayState {
             playing: false,
             speed: PlaybackSpeed::X1,
             last_tick: Instant::now(),
+            accumulated_budget_ms: 0.0,
         }
     }
 
     pub fn tick(&mut self, snapshots: &[OrderbookSnapshot]) -> bool {
         if !self.playing || snapshots.is_empty() || self.cursor >= snapshots.len() - 1 {
+            self.last_tick = Instant::now();
+            self.accumulated_budget_ms = 0.0;
             return false;
         }
 
         let elapsed = self.last_tick.elapsed();
         self.last_tick = Instant::now();
 
-        // Convert elapsed real time to simulated time budget (ms)
-        let mut budget_ms = elapsed.as_secs_f64() * 1000.0 * self.speed.multiplier();
+        // Accumulate simulated time across frames so gaps spanning multiple frames work.
+        self.accumulated_budget_ms +=
+            elapsed.as_secs_f64() * 1000.0 * self.speed.multiplier();
 
         let mut advanced = false;
-        while self.cursor < snapshots.len() - 1 && budget_ms > 0.0 {
+        while self.cursor < snapshots.len() - 1 && self.accumulated_budget_ms > 0.0 {
             let current_ts = snapshots[self.cursor].timestamp;
             let next_ts = snapshots[self.cursor + 1].timestamp;
             let gap_ms = (next_ts - current_ts).num_milliseconds().max(0) as f64;
 
-            if budget_ms >= gap_ms {
+            if self.accumulated_budget_ms >= gap_ms {
                 self.cursor += 1;
-                budget_ms -= gap_ms;
+                self.accumulated_budget_ms -= gap_ms;
                 advanced = true;
             } else {
                 break;
@@ -118,6 +125,7 @@ impl ReplayState {
         if self.cursor < max.saturating_sub(1) {
             self.cursor += 1;
             self.last_tick = Instant::now();
+            self.accumulated_budget_ms = 0.0;
             self.playing = false;
         }
     }
@@ -125,12 +133,14 @@ impl ReplayState {
     pub fn step_backward(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
         self.last_tick = Instant::now();
+        self.accumulated_budget_ms = 0.0;
         self.playing = false;
     }
 
     pub fn toggle_pause(&mut self) {
         self.playing = !self.playing;
         self.last_tick = Instant::now();
+        self.accumulated_budget_ms = 0.0;
     }
 
     pub fn speed_up(&mut self) {
