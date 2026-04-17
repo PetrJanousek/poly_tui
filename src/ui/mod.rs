@@ -63,9 +63,8 @@ fn render_browser(f: &mut Frame, app: &mut App) {
 }
 
 fn render_replay(f: &mut Frame, app: &mut App) {
-    let snapshots = app.current_snapshots();
-    let cursor = app.replay.cursor.min(snapshots.len().saturating_sub(1));
-    let current_snapshot = snapshots.get(cursor).copied();
+    let up_snap = app.current_up_snapshot();
+    let down_snap = app.current_down_snapshot();
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -76,34 +75,35 @@ fn render_replay(f: &mut Frame, app: &mut App) {
         ])
         .split(f.area());
 
-    // Top row: market list | depth | orderbook
+    // Top row: market info | up depth | up orderbook | down depth | down orderbook
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
+            Constraint::Percentage(15),
+            Constraint::Percentage(21),
+            Constraint::Percentage(22),
+            Constraint::Percentage(21),
+            Constraint::Percentage(21),
         ])
         .split(main_chunks[0]);
 
-    // Show market info in left panel during replay
+    // Market info panel
     let market_info = app
         .market_data
         .as_ref()
         .map(|d| {
             let title = format!(
-                " {} - {} [{}] ",
+                " {} - {} ",
                 d.market.crypto.to_uppercase(),
                 d.market.question,
-                app.show_outcome
             );
             let play_status = if app.replay.playing { "Playing" } else { "Paused" };
             Paragraph::new(format!(
-                "\n  Market: {}\n  Crypto: {}\n  Outcome: {}\n  Snapshots: {}\n  Trades: {}\n\n  {} | Speed: {}",
+                "\n  {}\n  {}\n\n  Up:   {}\n  Down: {}\n  Trades: {}\n\n  {} | {}",
                 d.market.question,
                 d.market.crypto.to_uppercase(),
-                app.show_outcome,
-                snapshots.len(),
+                d.up_snapshots.len(),
+                d.down_snapshots.len(),
                 d.user_trades.len(),
                 play_status,
                 app.replay.speed.label(),
@@ -118,8 +118,10 @@ fn render_replay(f: &mut Frame, app: &mut App) {
         .unwrap_or_else(|| Paragraph::new("No market"));
 
     f.render_widget(market_info, top_chunks[0]);
-    depth::render(f, current_snapshot, top_chunks[1]);
-    orderbook::render(f, current_snapshot, top_chunks[2]);
+    depth::render(f, up_snap, "Up", top_chunks[1]);
+    orderbook::render(f, up_snap, "Up", top_chunks[2]);
+    depth::render(f, down_snap, "Down", top_chunks[3]);
+    orderbook::render(f, down_snap, "Down", top_chunks[4]);
 
     // Bottom row: trades | pnl
     let bottom_chunks = Layout::default()
@@ -128,10 +130,8 @@ fn render_replay(f: &mut Frame, app: &mut App) {
         .split(main_chunks[1]);
 
     let visible_trades = app.market_data.as_ref().map_or(0, |d| {
-        app.replay.visible_trade_count(
-            &snapshots.iter().copied().cloned().collect::<Vec<_>>(),
-            &d.user_trades,
-        )
+        app.replay
+            .visible_trade_count(&d.up_snapshots, &d.user_trades)
     });
 
     if let Some(data) = &app.market_data {
@@ -139,17 +139,21 @@ fn render_replay(f: &mut Frame, app: &mut App) {
         pnl_panel::render(
             f,
             &app.pnl,
-            current_snapshot,
+            up_snap,
+            down_snap,
             data.resolution.as_ref(),
             bottom_chunks[1],
         );
     }
 
-    // Timeline
-    let trades_ref: &[crate::model::UserTrade] = app
-        .market_data
-        .as_ref()
-        .map(|d| d.user_trades.as_slice())
-        .unwrap_or(&[]);
-    timeline::render(f, &app.replay, &snapshots, trades_ref, main_chunks[2]);
+    // Timeline driven by up_snapshots
+    if let Some(data) = &app.market_data {
+        timeline::render(
+            f,
+            &app.replay,
+            &data.up_snapshots,
+            &data.user_trades,
+            main_chunks[2],
+        );
+    }
 }

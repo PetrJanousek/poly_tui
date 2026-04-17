@@ -9,6 +9,7 @@ pub struct Market {
     pub end_date: Option<NaiveDateTime>,
 }
 
+
 #[derive(Debug, Clone)]
 pub struct OrderbookSnapshot {
     pub timestamp: NaiveDateTime,
@@ -47,7 +48,15 @@ pub struct Resolution {
 
 pub struct MarketData {
     pub market: Market,
-    pub snapshots: Vec<OrderbookSnapshot>,
+    pub up_snapshots: Vec<OrderbookSnapshot>,
+    pub down_snapshots: Vec<OrderbookSnapshot>,
     pub user_trades: Vec<UserTrade>,
     pub resolution: Option<Resolution>,
+}
+
+impl MarketData {
+    pub fn down_snapshot_at(&self, ts: NaiveDateTime) -> Option<&OrderbookSnapshot> {
+        let idx = self.down_snapshots.partition_point(|s| s.timestamp <= ts);
+        idx.checked_sub(1).and_then(|i| self.down_snapshots.get(i))
+    }
 }

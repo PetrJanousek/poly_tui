@@ -79,7 +79,7 @@ fn handle_replay_key(app: &mut App, key: KeyEvent) -> bool {
         }
 
         KeyCode::Right | KeyCode::Char('l') => {
-            let count = app.current_snapshots().len();
+            let count = app.up_snapshots().len();
             app.replay.step_forward(count);
             app.sync_pnl();
         }
@@ -95,10 +95,6 @@ fn handle_replay_key(app: &mut App, key: KeyEvent) -> bool {
 
         KeyCode::Char('-') => {
             app.replay.slow_down();
-        }
-
-        KeyCode::Char('s') => {
-            app.toggle_outcome();
         }
 
         _ => {}
@@ -119,9 +115,13 @@ async fn load_market_data(
         db::fetch_resolution(db, &market.condition_id),
     )?;
 
+    let (up_snapshots, down_snapshots): (Vec<_>, Vec<_>) =
+        snapshots.into_iter().partition(|s| s.outcome == "Up");
+
     Ok(MarketData {
         market: market.clone(),
-        snapshots,
+        up_snapshots,
+        down_snapshots,
         user_trades,
         resolution,
     })

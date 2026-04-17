@@ -29,7 +29,6 @@ pub struct App {
     pub market_data: Option<MarketData>,
     pub replay: ReplayState,
     pub pnl: PnlTracker,
-    pub show_outcome: String, // "Up" or "Down"
 
     // User addresses to track
     pub user_addresses: Vec<String>,
@@ -50,7 +49,6 @@ impl App {
             market_data: None,
             replay: ReplayState::new(),
             pnl: PnlTracker::default(),
-            show_outcome: "Up".to_string(),
             user_addresses,
         }
     }
@@ -62,32 +60,22 @@ impl App {
     }
 
     pub fn on_tick(&mut self) {
-        if let Some(data) = &self.market_data {
-            let outcome_snapshots: Vec<_> = data
-                .snapshots
-                .iter()
-                .filter(|s| s.outcome == self.show_outcome)
-                .cloned()
-                .collect();
-
-            self.replay.tick(&outcome_snapshots);
-            self.sync_pnl();
+        if self.market_data.is_none() {
+            return;
         }
+        {
+            let up_snaps = self.market_data.as_ref().unwrap().up_snapshots.as_slice();
+            self.replay.tick(up_snaps);
+        }
+        self.sync_pnl();
     }
 
     /// Recalculate visible trades and update PnL to match current cursor position.
     pub fn sync_pnl(&mut self) {
         if let Some(data) = &self.market_data {
-            let outcome_snapshots: Vec<_> = data
-                .snapshots
-                .iter()
-                .filter(|s| s.outcome == self.show_outcome)
-                .cloned()
-                .collect();
-
             let visible = self
                 .replay
-                .visible_trade_count(&outcome_snapshots, &data.user_trades);
+                .visible_trade_count(&data.up_snapshots, &data.user_trades);
             self.pnl.process_trades(&data.user_trades, visible);
         }
     }
@@ -96,7 +84,6 @@ impl App {
         self.market_data = Some(data);
         self.replay = ReplayState::new();
         self.pnl.reset();
-        self.show_outcome = "Up".to_string();
         self.mode = AppMode::Replay;
     }
 
@@ -105,27 +92,21 @@ impl App {
         self.market_data = None;
     }
 
-    pub fn toggle_outcome(&mut self) {
-        self.show_outcome = if self.show_outcome == "Up" {
-            "Down".to_string()
-        } else {
-            "Up".to_string()
-        };
-        // Reset replay for new outcome view
-        self.replay = ReplayState::new();
-        self.pnl.reset();
-    }
-
-    pub fn current_snapshots(&self) -> Vec<&crate::model::OrderbookSnapshot> {
+    pub fn up_snapshots(&self) -> &[crate::model::OrderbookSnapshot] {
         self.market_data
             .as_ref()
-            .map(|d| {
-                d.snapshots
-                    .iter()
-                    .filter(|s| s.outcome == self.show_outcome)
-                    .collect()
-            })
-            .unwrap_or_default()
+            .map(|d| d.up_snapshots.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn current_up_snapshot(&self) -> Option<&crate::model::OrderbookSnapshot> {
+        let snaps = self.up_snapshots();
+        snaps.get(self.replay.cursor.min(snaps.len().saturating_sub(1)))
+    }
+
+    pub fn current_down_snapshot(&self) -> Option<&crate::model::OrderbookSnapshot> {
+        let up = self.current_up_snapshot()?;
+        self.market_data.as_ref()?.down_snapshot_at(up.timestamp)
     }
 
     pub fn set_crypto_filter(&mut self, idx: usize) {

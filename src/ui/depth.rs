@@ -8,9 +8,9 @@ use ratatui::{
 
 use crate::model::OrderbookSnapshot;
 
-pub fn render(f: &mut Frame, snapshot: Option<&OrderbookSnapshot>, area: Rect) {
+pub fn render(f: &mut Frame, snapshot: Option<&OrderbookSnapshot>, label: &str, area: Rect) {
     let block = Block::default()
-        .title(" Depth ")
+        .title(format!(" {label} Depth "))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 

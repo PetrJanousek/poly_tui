@@ -12,7 +12,7 @@ use crate::replay::ReplayState;
 pub fn render(
     f: &mut Frame,
     replay: &ReplayState,
-    snapshots: &[&OrderbookSnapshot],
+    snapshots: &[OrderbookSnapshot],
     trades: &[UserTrade],
     area: Rect,
 ) {

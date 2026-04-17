@@ -12,7 +12,8 @@ use crate::pnl::PnlTracker;
 pub fn render(
     f: &mut Frame,
     pnl: &PnlTracker,
-    snapshot: Option<&OrderbookSnapshot>,
+    up_snapshot: Option<&OrderbookSnapshot>,
+    down_snapshot: Option<&OrderbookSnapshot>,
     resolution: Option<&Resolution>,
     area: Rect,
 ) {
@@ -21,7 +22,8 @@ pub fn render(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
-    let mid = snapshot.and_then(|s| s.mid_price()).unwrap_or(0.0);
+    let up_mid = up_snapshot.and_then(|s| s.mid_price()).unwrap_or(0.0);
+    let down_mid = down_snapshot.and_then(|s| s.mid_price()).unwrap_or(0.0);
 
     let mut lines = Vec::new();
 
@@ -85,7 +87,7 @@ pub fn render(
     ]));
 
     // Unrealized PnL
-    let unrealized = pnl.total_unrealized(mid, 1.0 - mid);
+    let unrealized = pnl.total_unrealized(up_mid, down_mid);
     let unreal_color = if unrealized >= 0.0 {
         Color::Green
     } else {
