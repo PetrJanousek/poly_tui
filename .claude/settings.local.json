@@ -4,7 +4,9 @@
       "Bash(cargo check *)",
       "WebFetch(domain:docs.polymarket.com)",
       "Bash(uv run *)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "Bash(gh issue *)",
+      "Bash(curl *)"
     ]
   }
 }
