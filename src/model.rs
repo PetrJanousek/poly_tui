@@ -40,6 +40,18 @@ pub struct UserTrade {
 }
 
 #[derive(Debug, Clone)]
+pub struct Trade {
+    pub timestamp: NaiveDateTime,
+    pub side: String,
+    pub outcome: String,
+    pub price: f64,
+    pub size: f64,
+    pub transaction_hash: String,
+    pub is_user: bool,
+    pub is_taker: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Resolution {
     pub winning_outcome: String,
     pub yes_price: f64,
@@ -50,6 +62,7 @@ pub struct MarketData {
     pub market: Market,
     pub up_snapshots: Vec<OrderbookSnapshot>,
     pub down_snapshots: Vec<OrderbookSnapshot>,
+    pub all_trades: Vec<Trade>,
     pub user_trades: Vec<UserTrade>,
     pub resolution: Option<Resolution>,
 }

@@ -29,6 +29,7 @@ pub struct App {
     pub market_data: Option<MarketData>,
     pub replay: ReplayState,
     pub pnl: PnlTracker,
+    pub show_all_trades: bool,
 
     // User addresses to track
     pub user_addresses: Vec<String>,
@@ -49,6 +50,7 @@ impl App {
             market_data: None,
             replay: ReplayState::new(),
             pnl: PnlTracker::default(),
+            show_all_trades: false,
             user_addresses,
         }
     }

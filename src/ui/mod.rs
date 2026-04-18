@@ -129,13 +129,31 @@ fn render_replay(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(main_chunks[1]);
 
-    let visible_trades = app.market_data.as_ref().map_or(0, |d| {
-        app.replay
-            .visible_trade_count(&d.up_snapshots, &d.user_trades)
-    });
+    let current_ts = up_snap.map(|s| s.timestamp).unwrap_or(chrono::NaiveDateTime::MIN);
 
     if let Some(data) = &app.market_data {
-        trades::render(f, &data.user_trades, visible_trades, bottom_chunks[0]);
+        let all_visible = data
+            .all_trades
+            .iter()
+            .take_while(|t| t.timestamp <= current_ts)
+            .count();
+        let user_visible = app
+            .replay
+            .visible_trade_count(&data.up_snapshots, &data.user_trades);
+        let visible_count = if app.show_all_trades {
+            all_visible
+        } else {
+            user_visible
+        };
+
+        trades::render(
+            f,
+            &data.all_trades,
+            &data.user_trades,
+            app.show_all_trades,
+            visible_count,
+            bottom_chunks[0],
+        );
         pnl_panel::render(
             f,
             &app.pnl,

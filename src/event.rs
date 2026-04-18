@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, AppMode};
@@ -97,6 +99,10 @@ fn handle_replay_key(app: &mut App, key: KeyEvent) -> bool {
             app.replay.slow_down();
         }
 
+        KeyCode::Char('t') => {
+            app.show_all_trades = !app.show_all_trades;
+        }
+
         _ => {}
     }
     false
@@ -109,11 +115,50 @@ async fn load_market_data(
 ) -> anyhow::Result<MarketData> {
     let trades_fut = fetch_polymarket_trades(&db.http, &market.condition_id, user_addresses);
 
-    let (snapshots, user_trades, resolution) = tokio::try_join!(
+    let (snapshots, mut user_trades, resolution) = tokio::try_join!(
         db::fetch_orderbook(db, &market.condition_id),
         trades_fut,
         db::fetch_resolution(db, &market.condition_id),
     )?;
+
+    // Fetch all market trades separately — non-fatal so older markets without
+    // `trades` table data still load correctly.
+    let mut all_trades = db::fetch_market_trades(db, &market.condition_id)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("fetch_market_trades failed (continuing without): {e}");
+            vec![]
+        });
+
+    // Phase 1 (read-only): correct user trade timestamps and collect annotation data.
+    // hash_to_idx borrows all_trades immutably; drop it before mutating all_trades.
+    // Match only by transaction_hash — QuestDB stores the counterparty's outcome
+    // (inverted vs Polymarket), so (hash, outcome, side) never matches.
+    let annotations: Vec<(usize, bool)> = {
+        let hash_to_idx: HashMap<String, usize> = all_trades
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.transaction_hash.to_ascii_uppercase(), i))
+            .collect();
+
+        let mut pairs = Vec::new();
+        for ut in &mut user_trades {
+            let key = ut.transaction_hash.to_ascii_uppercase();
+            if let Some(&idx) = hash_to_idx.get(&key) {
+                ut.timestamp = all_trades[idx].timestamp; // nanosecond precision
+                pairs.push((idx, ut.is_taker));
+            }
+        }
+        pairs
+    };
+
+    // Phase 2: mark matching entries in all_trades as user trades.
+    for (idx, is_taker) in annotations {
+        all_trades[idx].is_user = true;
+        all_trades[idx].is_taker = Some(is_taker);
+    }
+
+    user_trades.sort_by_key(|t| t.timestamp);
 
     let (up_snapshots, down_snapshots): (Vec<_>, Vec<_>) =
         snapshots.into_iter().partition(|s| s.outcome == "Up");
@@ -122,6 +167,7 @@ async fn load_market_data(
         market: market.clone(),
         up_snapshots,
         down_snapshots,
+        all_trades,
         user_trades,
         resolution,
     })
