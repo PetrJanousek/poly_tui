@@ -163,6 +163,29 @@ async fn load_market_data(
     let (up_snapshots, down_snapshots): (Vec<_>, Vec<_>) =
         snapshots.into_iter().partition(|s| s.outcome == "Up");
 
+    // Fetch spot prices over the market's time window (non-fatal)
+    let (price_from, price_to) = {
+        let all_snaps = up_snapshots.iter().chain(down_snapshots.iter());
+        let from = all_snaps.clone().map(|s| s.timestamp).min();
+        let to = all_snaps.map(|s| s.timestamp).max();
+        match (from, to) {
+            (Some(f), Some(t)) => (f, t),
+            _ => {
+                let end = market.end_date.unwrap_or_else(|| chrono::Utc::now().naive_utc());
+                (end - chrono::Duration::minutes(10), end)
+            }
+        }
+    };
+
+    let chainlink_sym = format!("{}/usd", market.crypto);
+    let binance_sym = format!("{}usdt", market.crypto);
+    let (chainlink_prices, binance_prices) = tokio::join!(
+        db::fetch_price_history(db, "crypto_prices", &chainlink_sym, price_from, price_to),
+        db::fetch_price_history(db, "binance_prices", &binance_sym, price_from, price_to),
+    );
+    let chainlink_prices = chainlink_prices.unwrap_or_default();
+    let binance_prices = binance_prices.unwrap_or_default();
+
     Ok(MarketData {
         market: market.clone(),
         up_snapshots,
@@ -170,6 +193,8 @@ async fn load_market_data(
         all_trades,
         user_trades,
         resolution,
+        chainlink_prices,
+        binance_prices,
     })
 }
 

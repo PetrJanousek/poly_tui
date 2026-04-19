@@ -65,6 +65,8 @@ pub struct MarketData {
     pub all_trades: Vec<Trade>,
     pub user_trades: Vec<UserTrade>,
     pub resolution: Option<Resolution>,
+    pub chainlink_prices: Vec<(NaiveDateTime, f64)>,
+    pub binance_prices: Vec<(NaiveDateTime, f64)>,
 }
 
 impl MarketData {

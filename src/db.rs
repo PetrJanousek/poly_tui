@@ -264,6 +264,57 @@ pub async fn fetch_user_trades(
     Ok(trades)
 }
 
+pub async fn fetch_price_history(
+    db: &Db,
+    table: &str,
+    symbol: &str,
+    from_ts: chrono::NaiveDateTime,
+    to_ts: chrono::NaiveDateTime,
+) -> Result<Vec<(chrono::NaiveDateTime, f64)>> {
+    let from_us = from_ts.and_utc().timestamp_micros();
+    let to_us = to_ts.and_utc().timestamp_micros();
+
+    let sql = format!(
+        "SELECT timestamp, price \
+         FROM {table} \
+         WHERE symbol = '{symbol}' \
+           AND timestamp >= cast({from_us} as timestamp) \
+           AND timestamp <= cast({to_us} as timestamp) \
+         ORDER BY timestamp ASC"
+    );
+
+    let resp = query(db, &sql).await;
+    // Non-fatal: return empty if symbol not present in table
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("fetch_price_history({table}, {symbol}): {e}");
+            return Ok(vec![]);
+        }
+    };
+
+    let dataset = match resp["dataset"].as_array() {
+        Some(d) => d,
+        None => return Ok(vec![]),
+    };
+
+    let mut out = Vec::with_capacity(dataset.len());
+    for row in dataset {
+        let arr = match row.as_array() {
+            Some(a) => a,
+            None => continue,
+        };
+        if arr[0].is_null() || arr[1].is_null() {
+            continue;
+        }
+        if let Ok(ts) = parse_timestamp(get_str(arr, 0)) {
+            out.push((ts, get_f64(arr, 1)));
+        }
+    }
+
+    Ok(out)
+}
+
 pub async fn fetch_resolution(
     db: &Db,
     condition_id: &str,
