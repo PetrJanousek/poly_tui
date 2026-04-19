@@ -2,6 +2,7 @@ pub mod depth;
 pub mod market_list;
 pub mod orderbook;
 pub mod pnl_panel;
+pub mod price_chart;
 pub mod timeline;
 pub mod trades;
 
@@ -63,9 +64,9 @@ fn render_browser(f: &mut Frame, app: &mut App) {
 }
 
 fn render_replay(f: &mut Frame, app: &mut App) {
-    let snapshots = app.current_snapshots();
-    let cursor = app.replay.cursor.min(snapshots.len().saturating_sub(1));
-    let current_snapshot = snapshots.get(cursor).copied();
+    let up_snap = app.current_up_snapshot();
+    let down_snap = app.current_down_snapshot();
+    let current_ts = up_snap.map(|s| s.timestamp).unwrap_or(chrono::NaiveDateTime::MIN);
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -76,80 +77,107 @@ fn render_replay(f: &mut Frame, app: &mut App) {
         ])
         .split(f.area());
 
-    // Top row: market list | depth | orderbook
+    // Top row: [market info | up orderbook | up depth / down depth | down orderbook]
     let top_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
+            Constraint::Percentage(13), // market info
+            Constraint::Fill(1),        // up orderbook
+            Constraint::Percentage(14), // depth stack
+            Constraint::Fill(1),        // down orderbook
         ])
         .split(main_chunks[0]);
 
-    // Show market info in left panel during replay
-    let market_info = app
-        .market_data
-        .as_ref()
-        .map(|d| {
-            let title = format!(
-                " {} - {} [{}] ",
-                d.market.crypto.to_uppercase(),
-                d.market.question,
-                app.show_outcome
-            );
-            let play_status = if app.replay.playing { "Playing" } else { "Paused" };
-            Paragraph::new(format!(
-                "\n  Market: {}\n  Crypto: {}\n  Outcome: {}\n  Snapshots: {}\n  Trades: {}\n\n  {} | Speed: {}",
-                d.market.question,
-                d.market.crypto.to_uppercase(),
-                app.show_outcome,
-                snapshots.len(),
-                d.user_trades.len(),
-                play_status,
-                app.replay.speed.label(),
-            ))
-            .block(
+    // Depth column: up depth on top, down depth below
+    let depth_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(top_chunks[2]);
+
+    // Market info panel
+    if let Some(data) = &app.market_data {
+        let play_status = if app.replay.playing { "▶" } else { "⏸" };
+        let speed = app.replay.speed.label();
+        let question = &data.market.question;
+        let q_short = if question.len() > 16 {
+            format!("{}…", &question[..16])
+        } else {
+            question.clone()
+        };
+        let info_text = format!(
+            "{} {} {}\n{}\nUp:{} Dn:{}\nTrades:{}",
+            data.market.crypto.to_uppercase(),
+            play_status,
+            speed,
+            q_short,
+            data.up_snapshots.len(),
+            data.down_snapshots.len(),
+            data.user_trades.len(),
+        );
+        f.render_widget(
+            Paragraph::new(info_text).block(
                 Block::default()
-                    .title(title)
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(Color::DarkGray)),
-            )
-        })
-        .unwrap_or_else(|| Paragraph::new("No market"));
+            ),
+            top_chunks[0],
+        );
+    }
 
-    f.render_widget(market_info, top_chunks[0]);
-    depth::render(f, current_snapshot, top_chunks[1]);
-    orderbook::render(f, current_snapshot, top_chunks[2]);
+    orderbook::render(f, up_snap, "Up", top_chunks[1]);
+    depth::render(f, up_snap, "Up", depth_chunks[0]);
+    depth::render(f, down_snap, "Down", depth_chunks[1]);
+    orderbook::render(f, down_snap, "Down", top_chunks[3]);
 
-    // Bottom row: trades | pnl
+    // Bottom row: [price chart | trades | pnl]
     let bottom_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .constraints([
+            Constraint::Percentage(55), // price chart
+            Constraint::Fill(1),        // trades
+            Constraint::Percentage(22), // pnl
+        ])
         .split(main_chunks[1]);
 
-    let visible_trades = app.market_data.as_ref().map_or(0, |d| {
-        app.replay.visible_trade_count(
-            &snapshots.iter().copied().cloned().collect::<Vec<_>>(),
-            &d.user_trades,
-        )
-    });
-
     if let Some(data) = &app.market_data {
-        trades::render(f, &data.user_trades, visible_trades, bottom_chunks[0]);
+        price_chart::render(f, data, current_ts, bottom_chunks[0]);
+
+        let all_visible = data
+            .all_trades
+            .iter()
+            .take_while(|t| t.timestamp <= current_ts)
+            .count();
+        let user_visible = app
+            .replay
+            .visible_trade_count(&data.up_snapshots, &data.user_trades);
+        let visible_count = if app.show_all_trades { all_visible } else { user_visible };
+
+        trades::render(
+            f,
+            &data.all_trades,
+            &data.user_trades,
+            app.show_all_trades,
+            visible_count,
+            bottom_chunks[1],
+        );
         pnl_panel::render(
             f,
             &app.pnl,
-            current_snapshot,
+            up_snap,
+            down_snap,
             data.resolution.as_ref(),
-            bottom_chunks[1],
+            bottom_chunks[2],
         );
     }
 
     // Timeline
-    let trades_ref: &[crate::model::UserTrade] = app
-        .market_data
-        .as_ref()
-        .map(|d| d.user_trades.as_slice())
-        .unwrap_or(&[]);
-    timeline::render(f, &app.replay, &snapshots, trades_ref, main_chunks[2]);
+    if let Some(data) = &app.market_data {
+        timeline::render(
+            f,
+            &app.replay,
+            &data.up_snapshots,
+            &data.user_trades,
+            main_chunks[2],
+        );
+    }
 }

@@ -12,7 +12,7 @@ use crate::replay::ReplayState;
 pub fn render(
     f: &mut Frame,
     replay: &ReplayState,
-    snapshots: &[&OrderbookSnapshot],
+    snapshots: &[OrderbookSnapshot],
     trades: &[UserTrade],
     area: Rect,
 ) {
@@ -38,11 +38,12 @@ pub fn render(
         .to_string();
 
     let bar_width = (inner.width as usize).saturating_sub(40);
-    let progress = if total > 1 {
-        cursor as f64 / (total - 1) as f64
-    } else {
-        0.0
-    };
+    // Progress is time-based so it aligns with the trade marker positions below.
+    let start_ts_unix = snapshots[0].timestamp.and_utc().timestamp();
+    let end_ts_unix = snapshots[total - 1].timestamp.and_utc().timestamp();
+    let span_ts = (end_ts_unix - start_ts_unix).max(1) as f64;
+    let current_ts_unix = snapshots[cursor].timestamp.and_utc().timestamp();
+    let progress = (current_ts_unix - start_ts_unix) as f64 / span_ts;
     let filled = (progress * bar_width as f64) as usize;
     let empty = bar_width.saturating_sub(filled);
     let bar = format!("[{}{}]", "=".repeat(filled), " ".repeat(empty));

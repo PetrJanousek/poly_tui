@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::app::{App, AppMode};
@@ -79,7 +81,7 @@ fn handle_replay_key(app: &mut App, key: KeyEvent) -> bool {
         }
 
         KeyCode::Right | KeyCode::Char('l') => {
-            let count = app.current_snapshots().len();
+            let count = app.up_snapshots().len();
             app.replay.step_forward(count);
             app.sync_pnl();
         }
@@ -97,8 +99,8 @@ fn handle_replay_key(app: &mut App, key: KeyEvent) -> bool {
             app.replay.slow_down();
         }
 
-        KeyCode::Char('s') => {
-            app.toggle_outcome();
+        KeyCode::Char('t') => {
+            app.show_all_trades = !app.show_all_trades;
         }
 
         _ => {}
@@ -113,17 +115,86 @@ async fn load_market_data(
 ) -> anyhow::Result<MarketData> {
     let trades_fut = fetch_polymarket_trades(&db.http, &market.condition_id, user_addresses);
 
-    let (snapshots, user_trades, resolution) = tokio::try_join!(
+    let (snapshots, mut user_trades, resolution) = tokio::try_join!(
         db::fetch_orderbook(db, &market.condition_id),
         trades_fut,
         db::fetch_resolution(db, &market.condition_id),
     )?;
 
+    // Fetch all market trades separately — non-fatal so older markets without
+    // `trades` table data still load correctly.
+    let mut all_trades = db::fetch_market_trades(db, &market.condition_id)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("fetch_market_trades failed (continuing without): {e}");
+            vec![]
+        });
+
+    // Phase 1 (read-only): correct user trade timestamps and collect annotation data.
+    // hash_to_idx borrows all_trades immutably; drop it before mutating all_trades.
+    // Match only by transaction_hash — QuestDB stores the counterparty's outcome
+    // (inverted vs Polymarket), so (hash, outcome, side) never matches.
+    let annotations: Vec<(usize, bool)> = {
+        let hash_to_idx: HashMap<String, usize> = all_trades
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.transaction_hash.to_ascii_uppercase(), i))
+            .collect();
+
+        let mut pairs = Vec::new();
+        for ut in &mut user_trades {
+            let key = ut.transaction_hash.to_ascii_uppercase();
+            if let Some(&idx) = hash_to_idx.get(&key) {
+                ut.timestamp = all_trades[idx].timestamp; // nanosecond precision
+                pairs.push((idx, ut.is_taker));
+            }
+        }
+        pairs
+    };
+
+    // Phase 2: mark matching entries in all_trades as user trades.
+    for (idx, is_taker) in annotations {
+        all_trades[idx].is_user = true;
+        all_trades[idx].is_taker = Some(is_taker);
+    }
+
+    user_trades.sort_by_key(|t| t.timestamp);
+
+    let (up_snapshots, down_snapshots): (Vec<_>, Vec<_>) =
+        snapshots.into_iter().partition(|s| s.outcome == "Up");
+
+    // Fetch spot prices over the market's time window (non-fatal)
+    let (price_from, price_to) = {
+        let all_snaps = up_snapshots.iter().chain(down_snapshots.iter());
+        let from = all_snaps.clone().map(|s| s.timestamp).min();
+        let to = all_snaps.map(|s| s.timestamp).max();
+        match (from, to) {
+            (Some(f), Some(t)) => (f, t),
+            _ => {
+                let end = market.end_date.unwrap_or_else(|| chrono::Utc::now().naive_utc());
+                (end - chrono::Duration::minutes(10), end)
+            }
+        }
+    };
+
+    let chainlink_sym = format!("{}/usd", market.crypto);
+    let binance_sym = format!("{}usdt", market.crypto);
+    let (chainlink_prices, binance_prices) = tokio::join!(
+        db::fetch_price_history(db, "crypto_prices", &chainlink_sym, price_from, price_to),
+        db::fetch_price_history(db, "binance_prices", &binance_sym, price_from, price_to),
+    );
+    let chainlink_prices = chainlink_prices.unwrap_or_default();
+    let binance_prices = binance_prices.unwrap_or_default();
+
     Ok(MarketData {
         market: market.clone(),
-        snapshots,
+        up_snapshots,
+        down_snapshots,
+        all_trades,
         user_trades,
         resolution,
+        chainlink_prices,
+        binance_prices,
     })
 }
 

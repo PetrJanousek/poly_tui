@@ -9,6 +9,7 @@ pub struct Market {
     pub end_date: Option<NaiveDateTime>,
 }
 
+
 #[derive(Debug, Clone)]
 pub struct OrderbookSnapshot {
     pub timestamp: NaiveDateTime,
@@ -39,6 +40,18 @@ pub struct UserTrade {
 }
 
 #[derive(Debug, Clone)]
+pub struct Trade {
+    pub timestamp: NaiveDateTime,
+    pub side: String,
+    pub outcome: String,
+    pub price: f64,
+    pub size: f64,
+    pub transaction_hash: String,
+    pub is_user: bool,
+    pub is_taker: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Resolution {
     pub winning_outcome: String,
     pub yes_price: f64,
@@ -47,7 +60,18 @@ pub struct Resolution {
 
 pub struct MarketData {
     pub market: Market,
-    pub snapshots: Vec<OrderbookSnapshot>,
+    pub up_snapshots: Vec<OrderbookSnapshot>,
+    pub down_snapshots: Vec<OrderbookSnapshot>,
+    pub all_trades: Vec<Trade>,
     pub user_trades: Vec<UserTrade>,
     pub resolution: Option<Resolution>,
+    pub chainlink_prices: Vec<(NaiveDateTime, f64)>,
+    pub binance_prices: Vec<(NaiveDateTime, f64)>,
+}
+
+impl MarketData {
+    pub fn down_snapshot_at(&self, ts: NaiveDateTime) -> Option<&OrderbookSnapshot> {
+        let idx = self.down_snapshots.partition_point(|s| s.timestamp <= ts);
+        idx.checked_sub(1).and_then(|i| self.down_snapshots.get(i))
+    }
 }

@@ -4,7 +4,14 @@
       "Bash(cargo check *)",
       "WebFetch(domain:docs.polymarket.com)",
       "Bash(uv run *)",
-      "Bash(cargo build *)"
+      "Bash(cargo build *)",
+      "Bash(gh issue *)",
+      "Bash(curl *)",
+      "WebFetch(domain:data-api.polymarket.com)",
+      "Bash(python3 -m json.tool)",
+      "Bash(tee /tmp/addr_b27.txt)",
+      "Bash(tee /tmp/addr_042.txt)",
+      "WebFetch(domain:lb-api.polymarket.com)"
     ]
   }
 }

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{NaiveDate, NaiveDateTime};
 
-use crate::model::{Market, OrderbookSnapshot, Resolution, UserTrade};
+use crate::model::{Market, OrderbookSnapshot, Resolution, Trade, UserTrade};
 
 fn urlencoded(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
@@ -140,10 +140,13 @@ pub async fn fetch_orderbook(
     db: &Db,
     condition_id: &str,
 ) -> Result<Vec<OrderbookSnapshot>> {
+    // SAMPLE BY 1s reduces tens-of-thousands of deltas to ~1 row/sec per outcome,
+    // keeping response size manageable while preserving 1-second replay fidelity.
     let sql = format!(
-        "SELECT timestamp, outcome, bids, asks \
+        "SELECT last(timestamp) as timestamp, outcome, last(bids) as bids, last(asks) as asks \
          FROM orderbook \
          WHERE condition_id = '{condition_id}' \
+         SAMPLE BY 100T ALIGN TO CALENDAR \
          ORDER BY timestamp ASC"
     );
 
@@ -169,6 +172,7 @@ pub async fn fetch_orderbook(
         });
     }
 
+    eprintln!("fetch_orderbook: {} snapshots", snapshots.len());
     Ok(snapshots)
 }
 
@@ -186,6 +190,36 @@ fn parse_json_2d_array(val: &serde_json::Value) -> Vec<Vec<f64>> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub async fn fetch_market_trades(db: &Db, condition_id: &str) -> Result<Vec<Trade>> {
+    let sql = format!(
+        "SELECT timestamp, outcome, side, price, size, transaction_hash \
+         FROM trades \
+         WHERE condition_id = '{condition_id}' \
+         ORDER BY timestamp ASC"
+    );
+
+    let resp = query(db, &sql).await.context("fetch_market_trades")?;
+    let dataset = resp["dataset"].as_array().context("missing dataset")?;
+
+    let mut trades = Vec::new();
+    for row in dataset {
+        let arr = row.as_array().context("row not array")?;
+        let timestamp = parse_timestamp(get_str(arr, 0))?;
+        trades.push(Trade {
+            timestamp,
+            outcome: get_str(arr, 1).to_string(),
+            side: get_str(arr, 2).to_string(),
+            price: get_f64(arr, 3),
+            size: get_f64(arr, 4),
+            transaction_hash: get_str(arr, 5).to_string(),
+            is_user: false,
+            is_taker: None,
+        });
+    }
+
+    Ok(trades)
 }
 
 pub async fn fetch_user_trades(
@@ -228,6 +262,57 @@ pub async fn fetch_user_trades(
     }
 
     Ok(trades)
+}
+
+pub async fn fetch_price_history(
+    db: &Db,
+    table: &str,
+    symbol: &str,
+    from_ts: chrono::NaiveDateTime,
+    to_ts: chrono::NaiveDateTime,
+) -> Result<Vec<(chrono::NaiveDateTime, f64)>> {
+    let from_us = from_ts.and_utc().timestamp_micros();
+    let to_us = to_ts.and_utc().timestamp_micros();
+
+    let sql = format!(
+        "SELECT timestamp, price \
+         FROM {table} \
+         WHERE symbol = '{symbol}' \
+           AND timestamp >= cast({from_us} as timestamp) \
+           AND timestamp <= cast({to_us} as timestamp) \
+         ORDER BY timestamp ASC"
+    );
+
+    let resp = query(db, &sql).await;
+    // Non-fatal: return empty if symbol not present in table
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("fetch_price_history({table}, {symbol}): {e}");
+            return Ok(vec![]);
+        }
+    };
+
+    let dataset = match resp["dataset"].as_array() {
+        Some(d) => d,
+        None => return Ok(vec![]),
+    };
+
+    let mut out = Vec::with_capacity(dataset.len());
+    for row in dataset {
+        let arr = match row.as_array() {
+            Some(a) => a,
+            None => continue,
+        };
+        if arr[0].is_null() || arr[1].is_null() {
+            continue;
+        }
+        if let Ok(ts) = parse_timestamp(get_str(arr, 0)) {
+            out.push((ts, get_f64(arr, 1)));
+        }
+    }
+
+    Ok(out)
 }
 
 pub async fn fetch_resolution(
