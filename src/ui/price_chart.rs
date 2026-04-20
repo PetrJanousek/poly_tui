@@ -72,6 +72,22 @@ pub fn render(f: &mut Frame, data: &MarketData, current_ts: NaiveDateTime, area:
         );
     }
 
+    // Strike price = first Chainlink price in the window
+    let strike = cl.first().map(|(_, p)| *p);
+
+    // Strike line as a flat dataset across the full x range
+    let strike_pts: Vec<(f64, f64)>;
+    if let Some(s) = strike {
+        strike_pts = vec![(x_min, s), (x_max, s)];
+        datasets.push(
+            Dataset::default()
+                .marker(symbols::Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(Color::DarkGray))
+                .data(&strike_pts),
+        );
+    }
+
     // Current prices in title
     let cl_cur = price_at(cl, current_ts)
         .map(|p| format!(" C:{}", fmt_price(p)))
@@ -79,8 +95,11 @@ pub fn render(f: &mut Frame, data: &MarketData, current_ts: NaiveDateTime, area:
     let bn_cur = price_at(bn, current_ts)
         .map(|p| format!(" B:{}", fmt_price(p)))
         .unwrap_or_default();
+    let strike_label = strike
+        .map(|s| format!(" K:{}", fmt_price(s)))
+        .unwrap_or_default();
     let crypto = data.market.crypto.to_uppercase();
-    let title = format!(" {crypto}{cl_cur}{bn_cur} ");
+    let title = format!(" {crypto}{cl_cur}{bn_cur}{strike_label} ");
 
     let chart = Chart::new(datasets)
         .block(

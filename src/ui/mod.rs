@@ -32,6 +32,10 @@ fn render_browser(f: &mut Frame, app: &mut App) {
     market_list::render(f, app, chunks[0]);
 
     // Status bar
+    let src_color = match &app.trade_source {
+        crate::app::TradeSource::User => Color::DarkGray,
+        crate::app::TradeSource::Backtest(_) => Color::Yellow,
+    };
     let help = Line::from(vec![
         Span::styled(" j/k", Style::default().fg(Color::Cyan)),
         Span::raw(":nav "),
@@ -43,6 +47,10 @@ fn render_browser(f: &mut Frame, app: &mut App) {
         Span::raw(":all "),
         Span::styled("[/]", Style::default().fg(Color::Cyan)),
         Span::raw(":date "),
+        Span::styled("b", Style::default().fg(Color::Cyan)),
+        Span::raw(":src["),
+        Span::styled(app.trade_source.label().to_string(), Style::default().fg(src_color)),
+        Span::raw("] "),
         Span::styled("q", Style::default().fg(Color::Cyan)),
         Span::raw(":quit"),
         if !app.status_message.is_empty() {
@@ -105,7 +113,7 @@ fn render_replay(f: &mut Frame, app: &mut App) {
             question.clone()
         };
         let info_text = format!(
-            "{} {} {}\n{}\nUp:{} Dn:{}\nTrades:{}",
+            "{} {} {}\n{}\nUp:{} Dn:{}\nTrades:{}\n[{}]",
             data.market.crypto.to_uppercase(),
             play_status,
             speed,
@@ -113,6 +121,7 @@ fn render_replay(f: &mut Frame, app: &mut App) {
             data.up_snapshots.len(),
             data.down_snapshots.len(),
             data.user_trades.len(),
+            app.trade_source.label(),
         );
         f.render_widget(
             Paragraph::new(info_text).block(

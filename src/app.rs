@@ -11,6 +11,27 @@ pub enum AppMode {
     Replay,
 }
 
+/// Which source to use for "user" trades when loading a market.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TradeSource {
+    /// Fetch real trades from the Polymarket API.
+    User,
+    /// Run a built-in strategy over the loaded snapshots.
+    Backtest(String),
+}
+
+impl TradeSource {
+    pub fn label(&self) -> &str {
+        match self {
+            TradeSource::User => "user",
+            TradeSource::Backtest(s) => s.as_str(),
+        }
+    }
+}
+
+/// Ordered list of available trade sources to cycle through with `b`.
+const TRADE_SOURCES: &[&str] = &["user", "threshold", "orderflow", "orderflow_merge"];
+
 pub const CRYPTOS: &[&str] = &["btc", "eth", "xrp", "sol", "hype", "doge", "bnb"];
 
 pub struct App {
@@ -30,6 +51,9 @@ pub struct App {
     pub replay: ReplayState,
     pub pnl: PnlTracker,
     pub show_all_trades: bool,
+
+    // Trade source for replay (user trades vs backtest strategy)
+    pub trade_source: TradeSource,
 
     // User addresses to track
     pub user_addresses: Vec<String>,
@@ -51,6 +75,7 @@ impl App {
             replay: ReplayState::new(),
             pnl: PnlTracker::default(),
             show_all_trades: false,
+            trade_source: TradeSource::User,
             user_addresses,
         }
     }
@@ -109,6 +134,18 @@ impl App {
     pub fn current_down_snapshot(&self) -> Option<&crate::model::OrderbookSnapshot> {
         let up = self.current_up_snapshot()?;
         self.market_data.as_ref()?.down_snapshot_at(up.timestamp)
+    }
+
+    /// Cycle through available trade sources (user → threshold → user → …).
+    pub fn cycle_trade_source(&mut self) {
+        let current = self.trade_source.label().to_string();
+        let idx = TRADE_SOURCES.iter().position(|&s| s == current).unwrap_or(0);
+        let next = TRADE_SOURCES[(idx + 1) % TRADE_SOURCES.len()];
+        self.trade_source = if next == "user" {
+            TradeSource::User
+        } else {
+            TradeSource::Backtest(next.to_string())
+        };
     }
 
     pub fn set_crypto_filter(&mut self, idx: usize) {

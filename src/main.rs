@@ -5,6 +5,7 @@ mod model;
 mod pnl;
 mod poly_api;
 mod replay;
+mod strategies;
 mod ui;
 
 use std::io;

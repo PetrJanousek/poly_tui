@@ -2,9 +2,13 @@ use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, TradeSource};
 use crate::db::{self, Db};
 use crate::model::MarketData;
+use crate::strategies::orderflow::OrderFlowStrategy;
+use crate::strategies::orderflow_merge::OrderFlowMergeStrategy;
+use crate::strategies::threshold::ThresholdStrategy;
+use crate::strategies::run_strategy_both_outcomes;
 
 /// Returns true if the app should quit.
 pub async fn handle_key(app: &mut App, key: KeyEvent, db: &Db) -> bool {
@@ -33,9 +37,10 @@ async fn handle_browser_key(app: &mut App, key: KeyEvent, db: &Db) -> bool {
 
         KeyCode::Enter => {
             if let Some(market) = app.selected_market().cloned() {
-                app.status_message = format!("Loading {}...", market.question);
+                let source = app.trade_source.clone();
+                app.status_message = format!("Loading {} [{}]...", market.question, source.label());
 
-                match load_market_data(db, &market, &app.user_addresses).await {
+                match load_market_data(db, &market, &app.user_addresses, &source).await {
                     Ok(data) => {
                         app.status_message.clear();
                         app.enter_replay(data);
@@ -45,6 +50,10 @@ async fn handle_browser_key(app: &mut App, key: KeyEvent, db: &Db) -> bool {
                     }
                 }
             }
+        }
+
+        KeyCode::Char('b') => {
+            app.cycle_trade_source();
         }
 
         // Crypto filters: 1=btc, 2=eth, 3=xrp, 4=sol, 5=hype, 6=doge, 7=bnb
@@ -112,12 +121,10 @@ async fn load_market_data(
     db: &Db,
     market: &crate::model::Market,
     user_addresses: &[String],
+    trade_source: &TradeSource,
 ) -> anyhow::Result<MarketData> {
-    let trades_fut = fetch_polymarket_trades(&db.http, &market.condition_id, user_addresses);
-
-    let (snapshots, mut user_trades, resolution) = tokio::try_join!(
+    let (snapshots, resolution) = tokio::try_join!(
         db::fetch_orderbook(db, &market.condition_id),
-        trades_fut,
         db::fetch_resolution(db, &market.condition_id),
     )?;
 
@@ -130,38 +137,72 @@ async fn load_market_data(
             vec![]
         });
 
-    // Phase 1 (read-only): correct user trade timestamps and collect annotation data.
-    // hash_to_idx borrows all_trades immutably; drop it before mutating all_trades.
-    // Match only by transaction_hash — QuestDB stores the counterparty's outcome
-    // (inverted vs Polymarket), so (hash, outcome, side) never matches.
-    let annotations: Vec<(usize, bool)> = {
-        let hash_to_idx: HashMap<String, usize> = all_trades
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.transaction_hash.to_ascii_uppercase(), i))
-            .collect();
-
-        let mut pairs = Vec::new();
-        for ut in &mut user_trades {
-            let key = ut.transaction_hash.to_ascii_uppercase();
-            if let Some(&idx) = hash_to_idx.get(&key) {
-                ut.timestamp = all_trades[idx].timestamp; // nanosecond precision
-                pairs.push((idx, ut.is_taker));
-            }
-        }
-        pairs
-    };
-
-    // Phase 2: mark matching entries in all_trades as user trades.
-    for (idx, is_taker) in annotations {
-        all_trades[idx].is_user = true;
-        all_trades[idx].is_taker = Some(is_taker);
-    }
-
-    user_trades.sort_by_key(|t| t.timestamp);
-
     let (up_snapshots, down_snapshots): (Vec<_>, Vec<_>) =
         snapshots.into_iter().partition(|s| s.outcome == "Up");
+
+    let user_trades = match trade_source {
+        TradeSource::User => {
+            // Fetch from Polymarket API and correct timestamps against QuestDB trades.
+            let mut trades =
+                fetch_polymarket_trades(&db.http, &market.condition_id, user_addresses).await?;
+
+            // Phase 1: correct timestamps and collect is_user annotations.
+            let annotations: Vec<(usize, bool)> = {
+                let hash_to_idx: HashMap<String, usize> = all_trades
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (t.transaction_hash.to_ascii_uppercase(), i))
+                    .collect();
+
+                let mut pairs = Vec::new();
+                for ut in &mut trades {
+                    let key = ut.transaction_hash.to_ascii_uppercase();
+                    if let Some(&idx) = hash_to_idx.get(&key) {
+                        ut.timestamp = all_trades[idx].timestamp; // nanosecond precision
+                        pairs.push((idx, ut.is_taker));
+                    }
+                }
+                pairs
+            };
+
+            // Phase 2: mark matching entries in all_trades as user trades.
+            for (idx, is_taker) in annotations {
+                all_trades[idx].is_user = true;
+                all_trades[idx].is_taker = Some(is_taker);
+            }
+
+            trades.sort_by_key(|t| t.timestamp);
+            trades
+        }
+
+        TradeSource::Backtest(strategy_id) => {
+            let trades = match strategy_id.as_str() {
+                "threshold" => run_strategy_both_outcomes(
+                    &mut ThresholdStrategy::default(),
+                    &up_snapshots,
+                    &down_snapshots,
+                    &all_trades,
+                ),
+                "orderflow" => run_strategy_both_outcomes(
+                    &mut OrderFlowStrategy::default(),
+                    &up_snapshots,
+                    &down_snapshots,
+                    &all_trades,
+                ),
+                "orderflow_merge" => run_strategy_both_outcomes(
+                    &mut OrderFlowMergeStrategy::default(),
+                    &up_snapshots,
+                    &down_snapshots,
+                    &all_trades,
+                ),
+                other => {
+                    eprintln!("unknown strategy '{other}', producing no trades");
+                    vec![]
+                }
+            };
+            trades
+        }
+    };
 
     // Fetch spot prices over the market's time window (non-fatal)
     let (price_from, price_to) = {
