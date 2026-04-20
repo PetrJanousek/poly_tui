@@ -1,3 +1,4 @@
+use crate::fees::{CRYPTO_FEE_RATE, calc_fee};
 use crate::model::{Resolution, UserTrade};
 
 #[derive(Debug, Default)]
@@ -29,6 +30,7 @@ impl OutcomePosition {
 pub struct PnlTracker {
     pub up: OutcomePosition,
     pub down: OutcomePosition,
+    pub fees_paid: f64,
     pub trades_processed: usize,
 }
 
@@ -63,6 +65,17 @@ impl PnlTracker {
                 pos.realized_pnl += (trade.price - avg) * sell_amount;
                 pos.cost_basis -= avg * sell_amount;
                 pos.inventory -= sell_amount;
+            }
+
+            // Takers pay fees on every trade (both BUY and SELL).
+            // Merge SELLs at price 1.0/0.0 are exempt — they are contract
+            // redemptions, not market trades.
+            if trade.is_taker {
+                let is_merge_redemption = side == "SELL"
+                    && (trade.price == 1.0 || trade.price == 0.0);
+                if !is_merge_redemption {
+                    self.fees_paid += calc_fee(trade.size, trade.price, CRYPTO_FEE_RATE);
+                }
             }
 
             self.trades_processed += 1;

@@ -1,6 +1,7 @@
 mod app;
 mod db;
 mod event;
+mod fees;
 mod model;
 mod pnl;
 mod poly_api;

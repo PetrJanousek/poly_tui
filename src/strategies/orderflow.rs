@@ -1,4 +1,5 @@
 use super::{Strategy, StrategyTrade};
+use crate::fees::{CRYPTO_FEE_RATE, calc_fee};
 use crate::model::{OrderbookSnapshot, Trade};
 
 /// Order flow imbalance strategy with automatic position balancing.
@@ -13,10 +14,8 @@ use crate::model::{OrderbookSnapshot, Trade};
 /// Stops all activity once avg_up_cost + avg_down_cost < `sum_cost_min` — the
 /// position is already locked in for profit.
 pub struct OrderFlowStrategy {
-    pub flow_threshold: f64, // default 1000.0
-    pub position_size: f64,  // default 20.0
-    /// Cease new entries once avg_up + avg_down drops below this (default 0.98).
-    pub sum_cost_min: f64,
+    pub flow_threshold: f64,
+    pub position_size: f64,
 
     up_flow: f64,
     down_flow: f64,
@@ -27,11 +26,10 @@ pub struct OrderFlowStrategy {
 }
 
 impl OrderFlowStrategy {
-    pub fn new(flow_threshold: f64, position_size: f64, sum_cost_min: f64) -> Self {
+    pub fn new(flow_threshold: f64, position_size: f64) -> Self {
         Self {
             flow_threshold,
             position_size,
-            sum_cost_min,
             up_flow: 0.0,
             down_flow: 0.0,
             up_cost_basis: 0.0,
@@ -44,7 +42,7 @@ impl OrderFlowStrategy {
 
 impl Default for OrderFlowStrategy {
     fn default() -> Self {
-        Self::new(1000.0, 5.0, 0.98)
+        Self::new(1000.0, 5.0)
     }
 }
 
@@ -108,12 +106,15 @@ impl Strategy for OrderFlowStrategy {
         }
 
         // --- Phase 2: flow-based entry ---
-        // Stop new entries if both sides are held and the combined avg is already
-        // below sum_cost_min — no more risk needed.
+        // Stop new entries if both sides are held and the position is already
+        // net-profitable after fees — no more risk needed.
         if self.up_shares > 0.0 && self.down_shares > 0.0 {
             let avg_up = self.up_cost_basis / self.up_shares;
             let avg_down = self.down_cost_basis / self.down_shares;
-            if avg_up + avg_down < self.sum_cost_min {
+            let gross = 1.0 - avg_up - avg_down;
+            let entry_fees = calc_fee(1.0, avg_up, CRYPTO_FEE_RATE)
+                + calc_fee(1.0, avg_down, CRYPTO_FEE_RATE);
+            if gross > entry_fees {
                 return vec![];
             }
         }

@@ -154,6 +154,18 @@ pub fn render(
         }
     }
 
+    // Fees
+    if pnl.fees_paid > 0.0 {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![
+            Span::styled("Fees:       ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("-{:.4}", pnl.fees_paid),
+                Style::default().fg(Color::Red),
+            ),
+        ]));
+    }
+
     // Resolution
     if let Some(res) = resolution {
         lines.push(Line::raw(""));
@@ -167,6 +179,14 @@ pub fn render(
             Span::styled("Final PnL:  ", Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{final_pnl:+.4}"), Style::default().fg(res_color)),
         ]));
+        if pnl.fees_paid > 0.0 {
+            let net = final_pnl - pnl.fees_paid;
+            let net_color = if net >= 0.0 { Color::Green } else { Color::Red };
+            lines.push(Line::from(vec![
+                Span::styled("Net:        ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{net:+.4}"), Style::default().fg(net_color)),
+            ]));
+        }
     }
 
     let p = Paragraph::new(lines).block(block);
