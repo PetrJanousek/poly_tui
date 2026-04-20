@@ -172,7 +172,7 @@ impl Strategy for OrderFlowMergeStrategy {
             return signals;
         }
 
-        let price = snap.ask_prices.first().copied().unwrap_or(0.5);
+        let Some(&price) = snap.ask_prices.first() else { return signals; };
 
         match outcome {
             "Up" => {

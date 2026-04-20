@@ -26,11 +26,32 @@ impl OutcomePosition {
     }
 }
 
+/// One completed merge redemption (1 Up + 1 Down → $1.00).
+#[derive(Debug, Clone)]
+pub struct MergeEvent {
+    pub qty: f64,
+    pub avg_up: f64,
+    pub avg_down: f64,
+}
+
+impl MergeEvent {
+    pub fn sum(&self) -> f64 { self.avg_up + self.avg_down }
+    pub fn gross(&self) -> f64 { self.qty * (1.0 - self.sum()) }
+    pub fn entry_fees(&self) -> f64 {
+        calc_fee(self.qty, self.avg_up, CRYPTO_FEE_RATE)
+            + calc_fee(self.qty, self.avg_down, CRYPTO_FEE_RATE)
+    }
+    pub fn net(&self) -> f64 { self.gross() - self.entry_fees() }
+}
+
 #[derive(Debug, Default)]
 pub struct PnlTracker {
     pub up: OutcomePosition,
     pub down: OutcomePosition,
     pub fees_paid: f64,
+    pub merges: Vec<MergeEvent>,
+    // Holds the Up leg of a pending merge until the Down leg arrives.
+    merge_pending_up: Option<(f64, f64)>, // (qty, avg_up)
     pub trades_processed: usize,
 }
 
@@ -56,6 +77,9 @@ impl PnlTracker {
             };
 
             let side = trade.side.to_uppercase();
+            let is_merge_redemption = side == "SELL"
+                && (trade.price == 1.0 || trade.price == 0.0);
+
             if side == "BUY" {
                 pos.inventory += trade.size;
                 pos.cost_basis += trade.price * trade.size;
@@ -63,6 +87,22 @@ impl PnlTracker {
                 let avg = pos.avg_cost();
                 let sell_amount = trade.size.min(pos.inventory);
                 pos.realized_pnl += (trade.price - avg) * sell_amount;
+
+                // Record per-merge events. Up leg arrives first; Down leg completes the pair.
+                if is_merge_redemption {
+                    match trade.outcome.as_str() {
+                        "Up" => {
+                            self.merge_pending_up = Some((sell_amount, avg));
+                        }
+                        "Down" => {
+                            if let Some((up_qty, avg_up)) = self.merge_pending_up.take() {
+                                self.merges.push(MergeEvent { qty: up_qty, avg_up, avg_down: avg });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 pos.cost_basis -= avg * sell_amount;
                 pos.inventory -= sell_amount;
             }
@@ -70,12 +110,8 @@ impl PnlTracker {
             // Takers pay fees on every trade (both BUY and SELL).
             // Merge SELLs at price 1.0/0.0 are exempt — they are contract
             // redemptions, not market trades.
-            if trade.is_taker {
-                let is_merge_redemption = side == "SELL"
-                    && (trade.price == 1.0 || trade.price == 0.0);
-                if !is_merge_redemption {
-                    self.fees_paid += calc_fee(trade.size, trade.price, CRYPTO_FEE_RATE);
-                }
+            if trade.is_taker && !is_merge_redemption {
+                self.fees_paid += calc_fee(trade.size, trade.price, CRYPTO_FEE_RATE);
             }
 
             self.trades_processed += 1;

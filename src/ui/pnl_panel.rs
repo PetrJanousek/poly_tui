@@ -187,6 +187,28 @@ pub fn render(
                 Span::styled(format!("{net:+.4}"), Style::default().fg(net_color)),
             ]));
         }
+
+        // Merges — one row per event, below Net
+        if !pnl.merges.is_empty() {
+            lines.push(Line::raw(""));
+            for m in &pnl.merges {
+                let mnet = m.net();
+                let net_color = if mnet >= 0.0 { Color::Green } else { Color::Red };
+                let sum_color = if m.sum() < 1.0 { Color::Green } else { Color::Red };
+                lines.push(Line::from(vec![
+                    Span::styled("Merge ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("{:.0}", m.qty), Style::default().fg(Color::White)),
+                    Span::raw("  U:"),
+                    Span::styled(format!("{:.4}", m.avg_up), Style::default().fg(Color::Yellow)),
+                    Span::raw(" D:"),
+                    Span::styled(format!("{:.4}", m.avg_down), Style::default().fg(Color::Yellow)),
+                    Span::raw(" S:"),
+                    Span::styled(format!("{:.4}", m.sum()), Style::default().fg(sum_color)),
+                    Span::raw("  "),
+                    Span::styled(format!("{mnet:+.4}"), Style::default().fg(net_color)),
+                ]));
+            }
+        }
     }
 
     let p = Paragraph::new(lines).block(block);

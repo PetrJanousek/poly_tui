@@ -132,7 +132,7 @@ impl Strategy for OrderFlowStrategy {
             return vec![];
         }
 
-        let price = snap.ask_prices.first().copied().unwrap_or(0.5);
+        let Some(&price) = snap.ask_prices.first() else { return vec![]; };
 
         match outcome {
             "Up" => {
